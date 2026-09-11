@@ -150,7 +150,7 @@ class Solver:
                 self.snapshot("R1 边界排除",
                               f"R1 边界: 格({x+1},{y+1}) 朝{where}是棋盘外 → "
                               f"{self._state_text(new)}",
-                              [("cell", x, y)])
+                              [("cell", (x, y))])
 
     def step_r2(self):
         """R2 确定格子推边"""
@@ -161,7 +161,7 @@ class Solver:
             if 0 not in states:          # 四个方向的边都已定，无需再推
                 continue
             m = next(iter(s))
-            changed = [("cell", x, y)]
+            changed = [("cell", (x, y))]
             open_d = [d for d in DIRS if m & BIT[d]]
             wall_d = [d for d in DIRS if not m & BIT[d]]
             for d in open_d:
@@ -198,7 +198,7 @@ class Solver:
                     raise Contradiction(f"格({x+1},{y+1}) 无可能形状")
                 self.poss[(x, y)] = new
                 side = "需要连接" if want else "是墙"
-                changed = [("cell", x, y)]
+                changed = [("cell", (x, y))]
                 if self.has_edge(x, y, d):
                     changed.append(("edge", self.ekey(x, y, d)))
                 self.snapshot("R3 边推格子",
@@ -226,7 +226,7 @@ class Solver:
                 self.set_edge(x, y, d, state)
                 self.snapshot("R4 一致推边",
                               f"R4 一致推边: 格({x+1},{y+1}) 剩{len(s)}种形状{why}",
-                              [("cell", x, y), ("edge", self.ekey(x, y, d))])
+                              [("cell", (x, y)), ("edge", self.ekey(x, y, d))])
                 return True
         return False
 
