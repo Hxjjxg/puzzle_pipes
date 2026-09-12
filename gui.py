@@ -9,6 +9,8 @@
   「撤销全部手动」按钮 = 回到纯推理状态。
   若某次挑选推出矛盾：自动回滚；若尝试时不存在任何人工假设，
   则该形状被确定排除（记作「手动排除」步，同样合法）。
+  矛盾信息会说明原因：局部冲突 / 成环（R5）/ 孤岛（R6、R8）。
+  挑选后的自动推理包含全局规则 R5-R8（见 solver.py），比纯局部规则强得多。
 
 颜色含义：
   蓝色粗管道 = 已确定的格子（浅蓝底）；橙色框 = 存在手动假设的格子
@@ -124,9 +126,7 @@ class ReplayApp:
         self.manual_revert(self.cell_at(e.x, e.y))
 
     def propagate(self):
-        sv = self.solver
-        while sv.step_r2() or sv.step_r3() or sv.step_r4():
-            pass
+        self.solver.propagate()   # 局部规则 R2-R4 + 全局规则 R5-R8
 
     def unwind(self, cell):
         """LIFO 撤销手动挑选及其引发的全部推理步；cell=None 撤销全部"""
@@ -172,23 +172,24 @@ class ReplayApp:
         self.notice = ""
         try:
             self.propagate()
-        except Contradiction:
+        except Contradiction as e:
             self.unwind(cell)              # 回滚这次挑选
             sv.poss[cell].discard(pick)
             if pristine:
                 self.manual_cands[cell] = [m for m in self.manual_cands[cell]
                                            if m != pick]
-                tag = "，该形状被排除"
+                tag = f"，该形状被排除"
             else:
                 tag = "（存在人工假设，仅回滚不排除）"
             sv.snapshot("手动排除",
-                        f"手动挑选 格({x+1},{y+1})={GLYPH[pick]} 推出矛盾{tag}",
+                        f"手动挑选 格({x+1},{y+1})={GLYPH[pick]} 推出矛盾"
+                        f"（{e}）{tag}",
                         [("cell", cell)])
             if pristine and sv.poss[cell]:
                 try:
                     self.propagate()
-                except Contradiction:
-                    self.notice = "排除后的状态自身矛盾（谜题数据异常？）"
+                except Contradiction as e:
+                    self.notice = f"排除后的状态自身矛盾（{e}），谜题数据异常？"
         self.refresh()
 
     def manual_revert(self, cell):
