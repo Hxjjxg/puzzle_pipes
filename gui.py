@@ -4,8 +4,12 @@
 回放：用进度条（滑块）拖到任意一步，或用 上一步/下一步/自动播放（键盘 ←/→/空格）。
 手动操作（作用于最新状态，操作后自动跳到最后一步）：
   左键点格子 = 挑选该格的一个候选形状；再点 = 换下一个候选（循环）。
-              之后 R2/R3/R4 推理自动继续。
   右键点格子 = 撤销该格的手动选择（它引发的所有后续推理一并回退）。
+  「自动推理」勾选框（默认开）：
+    开 = 挑选后 R1-R4/R5-R8 推理自动继续到不动；
+    关 = 挑选只记录、不推理，方便自己逐格手推观察；
+    此时可用「执行推理」按钮随时手动推一轮（若推出矛盾，
+    自动回退到推理前的状态并提示成环/孤岛等原因）。
   「撤销全部手动」按钮 = 回到纯推理状态。
   若某次挑选推出矛盾：自动回滚；若尝试时不存在任何人工假设，
   则该形状被确定排除（记作「手动排除」步，同样合法）。
@@ -51,6 +55,7 @@ class ReplayApp:
         self.manual_cands = {}    # 格子 -> 第一次手动挑选时冻结的候选形状列表
         self.manual_stack = []    # [(格子, 所选形状, 步骤检查点)]，LIFO 回退
         self.notice = ""          # 需要提示用户的信息（一次性）
+        self.auto = tk.BooleanVar(value=True)   # 挑选后是否自动继续规则推理
         self.idx = 0
         self.playing = False
 
@@ -72,8 +77,12 @@ class ReplayApp:
         self.play_btn.pack(side="left", padx=8)
         tk.Button(bar, text="下一条 ▶", width=9, font=FONT,
                   command=lambda: self.go(self.idx + 1)).pack(side="left")
+        tk.Checkbutton(bar, text="自动推理", variable=self.auto,
+                       font=FONT).pack(side="left", padx=(12, 0))
         tk.Button(bar, text="撤销全部手动", width=12, font=FONT,
                   command=self.revert_all).pack(side="right")
+        tk.Button(bar, text="执行推理", width=9, font=FONT,
+                  command=self.run_reason).pack(side="right", padx=8)
 
         self.slider = tk.Scale(root, from_=0, to=len(solver.steps) - 1,
                                orient="horizontal", showvalue=False,
@@ -170,26 +179,27 @@ class ReplayApp:
                     [("cell", cell)])
         self.manual_stack.append((cell, pick, ckpt))
         self.notice = ""
-        try:
-            self.propagate()
-        except Contradiction as e:
-            self.unwind(cell)              # 回滚这次挑选
-            sv.poss[cell].discard(pick)
-            if pristine:
-                self.manual_cands[cell] = [m for m in self.manual_cands[cell]
-                                           if m != pick]
-                tag = f"，该形状被排除"
-            else:
-                tag = "（存在人工假设，仅回滚不排除）"
-            sv.snapshot("手动排除",
-                        f"手动挑选 格({x+1},{y+1})={GLYPH[pick]} 推出矛盾"
-                        f"（{e}）{tag}",
-                        [("cell", cell)])
-            if pristine and sv.poss[cell]:
-                try:
-                    self.propagate()
-                except Contradiction as e:
-                    self.notice = f"排除后的状态自身矛盾（{e}），谜题数据异常？"
+        if self.auto.get():
+            try:
+                self.propagate()
+            except Contradiction as e:
+                self.unwind(cell)              # 回滚这次挑选
+                sv.poss[cell].discard(pick)
+                if pristine:
+                    self.manual_cands[cell] = [m for m in self.manual_cands[cell]
+                                               if m != pick]
+                    tag = "，该形状被排除"
+                else:
+                    tag = "（存在人工假设，仅回滚不排除）"
+                sv.snapshot("手动排除",
+                            f"手动挑选 格({x+1},{y+1})={GLYPH[pick]} 推出矛盾"
+                            f"（{e}）{tag}",
+                            [("cell", cell)])
+                if pristine and sv.poss[cell]:
+                    try:
+                        self.propagate()
+                    except Contradiction as e:
+                        self.notice = f"排除后的状态自身矛盾（{e}），谜题数据异常？"
         self.refresh()
 
     def manual_revert(self, cell):
@@ -204,6 +214,22 @@ class ReplayApp:
             self.unwind(None)
             self.notice = ""
             self.refresh()
+
+    def run_reason(self):
+        """「执行推理」按钮：手动推一轮到不动（自动推理关闭时用）。
+        若推出矛盾，回退到推理前的状态并提示原因。"""
+        sv = self.solver
+        ckpt = len(sv.steps)
+        self.notice = ""
+        try:
+            self.propagate()
+        except Contradiction as e:
+            del sv.steps[ckpt:]
+            snap = sv.steps[ckpt - 1]
+            sv.poss = {k: set(v) for k, v in snap["poss"].items()}
+            sv.edges = dict(snap["edges"])
+            self.notice = f"推理矛盾（{e}），已回退到推理前；请检查或撤销手动选择"
+        self.refresh()
 
     def refresh(self):
         self.slider.config(to=len(self.solver.steps) - 1)
@@ -322,18 +348,42 @@ def selftest(solver, hashed):
     stuck = solver.undetermined()
     if stuck:
         cell = stuck[0]
+
+        # 自动推理关闭：挑选只记录不推理；执行推理遇矛盾回退到推理前
+        app.auto.set(False)
+        base = len(solver.steps)
+        app.manual_pick(cell)            # 记录挑选，不推理
+        assert len(solver.steps) == base + 1, "关闭自动推理后挑选只应记录一步"
+        app.manual_pick(cell)            # 轮换到下一个候选（此题必为错误值）
+        assert len(solver.steps) == base + 1, "轮换应先撤销再记录，仍只有一步"
+        app.run_reason()                 # 手动推理 -> 矛盾 -> 回退
+        assert len(solver.steps) == base + 1, "矛盾后应回退到挑选后"
+        assert "矛盾" in app.notice
+        app.revert_all()
+        assert not app.manual_stack
+
+        # 自动推理开启：挑选后传播继续，轮换触发「手动排除」
+        app.auto.set(True)
         app.manual_pick(cell)            # 挑选
         app.manual_pick(cell)            # 轮换
         app.manual_pick(cell)            # 再轮换
         app.manual_revert(cell)          # 右键撤销
         app.revert_all()                 # 全部撤销
         assert not app.manual_stack
+
+        # 关掉自动推理，手动点一格候选，「执行推理」收尾
+        if solver.undetermined():
+            app.auto.set(False)
+            app.manual_pick(solver.undetermined()[0])
+            app.run_reason()
+            app.auto.set(True)
+
         assert all(solver.poss.values()), "poss 不应为空"
         for i in range(len(solver.steps)):
             app.draw(i)
             root.update()
     root.destroy()
-    print(f"gui selftest ok: 渲染 {len(solver.steps)} 步 + 手动挑选/轮换/撤销 冒烟通过")
+    print(f"gui selftest ok: 渲染 {len(solver.steps)} 步 + 挑选/轮换/撤销/自动推理开关 冒烟通过")
 
 
 def main():
