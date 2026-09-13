@@ -1,0 +1,53 @@
+/* 规则推理助手面板 + 建议填充闪烁 */
+#pl-helper {
+    position: fixed;
+    top: 76px;
+    left: 10px;
+    z-index: 99990;
+    width: 252px;
+    background: rgba(28, 32, 38, 0.93);
+    color: #dde3ea;
+    font: 12px/1.55 "Segoe UI", "Microsoft YaHei", sans-serif;
+    padding: 10px 12px 8px;
+    border-radius: 8px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+    user-select: none;
+}
+#pl-helper .pl-title {
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 6px;
+    cursor: move;
+}
+#pl-helper .pl-row { margin-bottom: 4px; }
+#pl-helper .pl-row label { cursor: pointer; }
+#pl-helper .pl-status {
+    min-height: 38px;
+    white-space: pre-wrap;
+    margin-bottom: 8px;
+    color: #c8d2dc;
+}
+#pl-helper .pl-btns { display: flex; gap: 6px; }
+#pl-helper button {
+    flex: 1;
+    padding: 5px 8px;
+    border: 0;
+    border-radius: 5px;
+    background: #2f6fb2;
+    color: #fff;
+    font: 12px/1.4 inherit;
+    font-family: inherit;
+    cursor: pointer;
+}
+#pl-helper button:hover:not(:disabled) { background: #3a80c9; }
+#pl-helper button:disabled { opacity: 0.45; cursor: default; }
+#pl-helper .pl-hint { margin-top: 6px; font-size: 11px; color: #8b95a1; }
+
+.pl-suggest {
+    z-index: 30;
+    animation: plSuggestFlash 0.85s ease-in-out infinite;
+}
+@keyframes plSuggestFlash {
+    0%, 100% { box-shadow: 0 0 0 2px rgba(255, 193, 7, 0.3); }
+    50%      { box-shadow: 0 0 0 5px rgba(255, 152, 0, 0.95); }
+}
