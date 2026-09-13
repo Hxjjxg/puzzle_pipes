@@ -61,6 +61,11 @@ var PipesSolver = function (w, h, task) {
     for (var y = 0; y < h; y++) for (var x = 0; x < w; x++)
         this.poss.set(x + "," + y, orbitOf(task[y][x]));
     this.edges = new Map();                            // 键 -> 1 / -1
+    this.touched = new Set();                          // 本轮推理涉及过的格子 "x,y"
+};
+
+PipesSolver.prototype.touch = function (x, y) {
+    this.touched.add(x + "," + y);
 };
 
 PipesSolver.prototype.ekey = function (x, y, d) {
@@ -79,6 +84,8 @@ PipesSolver.prototype.edgeState = function (x, y, d) {
     return v === undefined ? 0 : v;
 };
 PipesSolver.prototype.setEdge = function (x, y, d, state) {
+    this.touch(x, y);
+    this.touch(x + DELTA[d][0], y + DELTA[d][1]);
     var k = this.ekey(x, y, d), old = this.edges.get(k);
     if (old !== undefined && old !== state)
         throw new Error("连接冲突: 格(" + (x + 1) + "," + (y + 1) + ")的" + DIR_CN[d] +
@@ -88,6 +95,7 @@ PipesSolver.prototype.setEdge = function (x, y, d, state) {
 /* 人工假设：把某格的可能性钉死为当前盘面显示的形状 */
 PipesSolver.prototype.assume = function (x, y, mask) {
     this.poss.set(x + "," + y, new Set([mask]));
+    this.touch(x, y);
 };
 PipesSolver.prototype.maskAt = function (x, y) {
     var s = this.poss.get(x + "," + y);
@@ -109,6 +117,7 @@ PipesSolver.prototype.stepBorder = function () {
         if (nw.size === s.size) continue;
         if (!nw.size) throw new Error("格(" + (x + 1) + "," + (y + 1) + ") 无可能形状");
         this.poss.set(x + "," + y, nw);
+        this.touch(x, y);
     }
 };
 
@@ -148,6 +157,7 @@ PipesSolver.prototype.stepR3 = function () {
             if (nw.size === s.size) continue;
             if (!nw.size) throw new Error("格(" + (x + 1) + "," + (y + 1) + ") 无可能形状");
             this.poss.set(key, nw);
+            this.touch(x, y);
             return true;
         }
     }
@@ -202,9 +212,12 @@ PipesSolver.prototype.stepGlobal = function () {
         var ab = this._cellsOf(keys[i]), a = ab[0], b = ab[1];
         var ka = a[0] + "," + a[1], kb = b[0] + "," + b[1];
         var ra = find(ka), rb = find(kb);
-        if (ra === rb)
+        if (ra === rb) {
+            this.touch(a[0], a[1]);
+            this.touch(b[0], b[1]);
             throw new Error("成环: 格(" + (a[0] + 1) + "," + (a[1] + 1) + ")与格(" +
                 (b[0] + 1) + "," + (b[1] + 1) + ")之间的确定连接围成闭环");
+        }
         if (size.get(ra) < size.get(rb)) { var t = ra; ra = rb; rb = t; }
         root.set(rb, ra);
         size.set(ra, size.get(ra) + size.get(rb));
@@ -234,6 +247,11 @@ PipesSolver.prototype.stepGlobal = function () {
     if (comps.length > 1) {
         comps.sort(function (a, b) { return a.length - b.length; });
         var small = comps[0], pp = small[0].split(",");
+        var self2 = this;
+        small.forEach(function (kk) {
+            var q = kk.split(",");
+            self2.touch(+q[0], +q[1]);
+        });
         throw new Error("孤岛: " + small.length + "格区域（如(" + (+pp[0] + 1) + "," + (+pp[1] + 1) +
             ")）与其余" + (w * h - small.length) + "格被墙隔死");
     }

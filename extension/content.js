@@ -98,14 +98,33 @@
     }
 
     // ---------- 面板 ----------
-    var panel, statusEl, mainBtn, backBtn, autoChk, flashCls = "pl-suggest";
+    var panel, statusEl, mainBtn, backBtn, autoChk, fillChk;
+    var flashCls = "pl-suggest", fillCls = "pl-fill", errCls = "pl-error";
     var auto = false, proposals = null, history = [], busy = false, lastBoardKey = null;
+    var autoFilled = new Set();          // 扩展自动填充过的格子（蓝色可开关显示）
+    var fillShow = true;
 
     function setStatus(text) { if (statusEl) statusEl.textContent = text; }
 
     function clearFlash() {
         document.querySelectorAll("." + flashCls).forEach(function (el) {
             el.classList.remove(flashCls);
+        });
+    }
+
+    function clearErrorMarks() {
+        document.querySelectorAll("." + errCls).forEach(function (el) {
+            el.classList.remove(errCls);
+        });
+    }
+
+    function refreshFillMarks() {
+        document.querySelectorAll("." + fillCls).forEach(function (el) {
+            el.classList.remove(fillCls);
+        });
+        if (!fillShow) return;
+        autoFilled.forEach(function (el) {
+            if (document.contains(el)) el.classList.add(fillCls);
         });
     }
 
@@ -130,11 +149,15 @@
     function runRound() {
         if (busy) return;
         dropProposals();
+        clearErrorMarks();
         var scan = scanBoard();
         if (!scan.ok) { setStatus(scan.why); updateButtons(); return; }
-        if (scan.key !== lastBoardKey) {          // 换题/重开：清空后退历史
+        if (scan.key !== lastBoardKey) {          // 换题/重开：清空后退历史与填充标记
             history = []; lastBoardKey = scan.key;
+            autoFilled.clear(); refreshFillMarks();
         }
+        var elOf = {};
+        scan.cells.forEach(function (c) { elOf[c.x + "," + c.y] = c.el; });
 
         var solver = new PipesSolver(scan.w, scan.h, scan.task);
         var i, c;
@@ -146,7 +169,14 @@
             }
             solver.run();
         } catch (e) {
-            setStatus("推理矛盾，已停止：" + e.message);
+            // 从推理开始到出错涉及过的所有格子标红
+            var nErr = 0;
+            solver.touched.forEach(function (key) {
+                var el = elOf[key];
+                if (el) { el.classList.add(errCls); nErr++; }
+            });
+            setStatus("推理出错，已停止：" + e.message +
+                "\n红色标出从推理开始到出错涉及的 " + nErr + " 格（含手工摆放）");
             updateButtons();
             return;
         }
@@ -166,7 +196,7 @@
             proposals = props;
             props.forEach(function (p) { p.el.classList.add(flashCls); });
             setStatus("已确定 " + determined + "/" + (scan.w * scan.h) +
-                " 格；建议旋转 " + props.length + " 格（闪烁中）\n点击「确认填充」应用");
+                " 格；建议旋转 " + props.length + " 格（橙色常亮）\n点击「确认填充」应用");
         } else {
             var total = scan.w * scan.h;
             if (determined === total) {
@@ -203,7 +233,11 @@
         history.push(batch);
         busy = false;
         proposals = null; clearFlash();
-        setStatus("已填充 " + batch.length + " 格，继续推理…");
+        batch.forEach(function (b) { autoFilled.add(b.el); });
+        refreshFillMarks();
+        setStatus(batch.length
+            ? "已填充 " + batch.length + " 格（蓝色标出），继续推理…"
+            : "建议的格子已被摆到位，无需旋转");
         updateButtons();
         if (auto) runRound();
     }
@@ -214,6 +248,7 @@
         var batch = history.pop();
         if (!batch) { setStatus("没有可后退的填充"); return; }
         busy = true; updateButtons();
+        clearErrorMarks();
         for (var i = batch.length - 1; i >= 0; i--) {
             var b = batch[i], el = b.el;
             if (!document.contains(el)) continue;
@@ -222,6 +257,14 @@
             var useCtrl = ctrl < plain, times = useCtrl ? ctrl : plain;
             for (var n = 0; n < times; n++) { fireClick(el, useCtrl); await sleep(25); }
         }
+        // 撤销后，若没有更早的批次填充过同一格，则取消它的蓝色标记
+        batch.forEach(function (b) {
+            var earlier = history.some(function (g) {
+                return g.some(function (e) { return e.el === b.el; });
+            });
+            if (!earlier) autoFilled.delete(b.el);
+        });
+        refreshFillMarks();
         busy = false;
         setStatus("已后退：撤销上一次填充（" + batch.length + " 格）");
         updateButtons();
@@ -233,22 +276,29 @@
         panel.innerHTML =
             '<div class="pl-title" id="pl-drag">🧩 规则推理助手</div>' +
             '<div class="pl-row"><label><input type="checkbox" id="pl-auto"> 自动推理（后台跑，出错即停）</label></div>' +
-            '<div class="pl-status" id="pl-status">勾选「自动推理」开始；闪烁的格子是建议旋转，确认后才真正填充。</div>' +
+            '<div class="pl-row"><label><input type="checkbox" id="pl-fillshow" checked> 显示自动填充区域（蓝色常亮）</label></div>' +
+            '<div class="pl-status" id="pl-status">勾选「自动推理」开始；橙色常亮 = 建议旋转，确认后才真正填充。</div>' +
             '<div class="pl-btns">' +
             '<button id="pl-main" disabled>重新推理</button>' +
             '<button id="pl-back" disabled>后退</button>' +
             "</div>" +
-            '<div class="pl-hint">后退：取消建议 / 撤销上次填充。手动摆过的格子不会被改写。</div>';
+            '<div class="pl-hint">橙=待确认建议；蓝=扩展填充过（可开关）；红=推理出错涉及区域。' +
+            "后退：取消建议 / 撤销上次填充；手动摆过的格子不会被改写。</div>";
         document.body.appendChild(panel);
         statusEl = panel.querySelector("#pl-status");
         mainBtn = panel.querySelector("#pl-main");
         backBtn = panel.querySelector("#pl-back");
         autoChk = panel.querySelector("#pl-auto");
+        fillChk = panel.querySelector("#pl-fillshow");
 
         autoChk.addEventListener("change", function () {
             auto = autoChk.checked;
             if (auto) { runRound(); }
             else { dropProposals("自动推理已关闭"); }
+        });
+        fillChk.addEventListener("change", function () {
+            fillShow = fillChk.checked;
+            refreshFillMarks();
         });
         mainBtn.addEventListener("click", function () {
             if (proposals && proposals.length) applyProposals();
@@ -278,7 +328,8 @@
             if (document.querySelector("#game .board-back > .cell")) {
                 clearInterval(timer);
                 if (mainBtn) { mainBtn.disabled = false; backBtn.disabled = false; }
-                setStatus("棋盘就绪。勾选「自动推理」开始；手动摆过的格子不会被改写。");
+                setStatus("棋盘就绪。勾选「自动推理」开始；橙色常亮 = 建议旋转（待确认），" +
+                    "蓝色 = 扩展自动填充区域（可开关显示）。");
             } else if (tries > 40) {
                 clearInterval(timer);
                 setStatus("长时间未找到棋盘（页面结构变化或尚未开局）");

@@ -43,11 +43,18 @@
 #pl-helper button:disabled { opacity: 0.45; cursor: default; }
 #pl-helper .pl-hint { margin-top: 6px; font-size: 11px; color: #8b95a1; }
 
+/* 橙色常亮 = 建议旋转（待确认） */
 .pl-suggest {
     z-index: 30;
-    animation: plSuggestFlash 0.85s ease-in-out infinite;
+    box-shadow: 0 0 0 4px rgba(255, 152, 0, 0.9);
 }
-@keyframes plSuggestFlash {
-    0%, 100% { box-shadow: 0 0 0 2px rgba(255, 193, 7, 0.3); }
-    50%      { box-shadow: 0 0 0 5px rgba(255, 152, 0, 0.95); }
+/* 蓝色常亮 = 扩展自动填充过的格子（可用面板开关显示/隐藏） */
+.pl-fill {
+    z-index: 29;
+    box-shadow: 0 0 0 4px rgba(33, 150, 243, 0.9);
+}
+/* 红色常亮 = 推理出错时从推理开始到出错涉及过的格子（覆盖其他标记） */
+.pl-error {
+    z-index: 31;
+    box-shadow: 0 0 0 5px rgba(229, 57, 53, 0.95), 0 0 8px 2px rgba(229, 57, 53, 0.5);
 }
