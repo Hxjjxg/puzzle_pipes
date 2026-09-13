@@ -10,6 +10,7 @@
 用法:
   python get_puzzle.py [size]        随机出一道题, size 默认 3 (10x10)
   python get_puzzle.py [size] [id]   按题号抓取指定题目
+                                     注意: 题号在对应尺寸下才有效
 输出: puzzles/ 下每个谜题一个 txt 文件
 """
 import re
@@ -82,15 +83,14 @@ def render(grid):
     return "\n".join(" ".join(GLYPH[v] for v in row) for row in grid)
 
 
-def main():
-    size = int(sys.argv[1]) if len(sys.argv) > 1 else 3
-    pid = sys.argv[2].replace(",", "") if len(sys.argv) > 2 else None
-    task_hex, w, h, pid, hashed = fetch_puzzle(size, pid)
+def fetch_and_save(size: int, puzzle_id: str | None = None) -> Path:
+    """抓取一道谜题并保存到 puzzles/，返回文件路径"""
+    task_hex, w, h, pid, hashed = fetch_puzzle(size, puzzle_id)
     grid = decode(task_hex, w, h)
 
     OUT_DIR.mkdir(exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = OUT_DIR / f"pipes_{w}x{h}_id{pid.replace(',', '')}_{ts}.txt"
+    out = OUT_DIR / f"pipes_{w}x{h}_id{pid.replace(',', '')}_s{size}_{ts}.txt"
     out.write_text(
         f"source: {URL}?size={size}\n"
         f"id: {pid}\n"
@@ -104,6 +104,13 @@ def main():
     )
     print(f"已保存 {out}  (题号: {pid})")
     print(render(grid))
+    return out
+
+
+def main():
+    size = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+    pid = sys.argv[2].replace(",", "") if len(sys.argv) > 2 else None
+    fetch_and_save(size, pid)
 
 
 if __name__ == "__main__":

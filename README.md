@@ -17,20 +17,24 @@
 ```bash
 python get_puzzle.py          # 随机抓一道 10x10（?size=3）
 python get_puzzle.py 5        # 抓更大盘面
-python get_puzzle.py 3 6672132  # 按题号抓指定题目
+python get_puzzle.py 3 6672132  # 按题号抓取（题号在对应尺寸下才有效）
 python solver.py              # 推理求解 puzzles/ 里最新一道
-python gui.py                 # 打开步骤回放界面
+python gui.py                 # 步骤回放界面（加载 puzzles/ 里最新一道）
+python gui.py 6672132         # 按题号加载（默认 10x10；本地已有直接用，
+                              # 否则联网抓取并保存到 puzzles/）
+python gui.py 5 6180259       # 按尺寸+题号加载
 python game.py                # 玩还原的游戏
 ```
 
 ## 数据格式
 
-每个谜题保存为 `puzzles/pipes_WxH_id*_时间戳.txt`：
+每个谜题保存为 `puzzles/` 下的 txt 文件（文件名含尺寸、题号与抓取时间）：
 
 - `task_hex`：每格一个十六进制字符（行优先），是 4-bit 管道掩码
 - `hashed_solution: md5(task_hex + 旋转串)`，游戏官方的胜利判定，可用于校验
 - 掩码位含义（对照游戏源码 `dc=[1,0,-1,0], dr=[0,-1,0,1]` 确认）：
   **1=右 2=上 4=左 8=下**
+- 注意：**题号在对应尺寸下才有效**（同一题号在不同尺寸下是不同的题）。
 - 每点一次水管 = 4 位左循环移位 `((m<<1)&15) | (m>>3)`；直线型（5/10）周期为 2，
   官方校验时把转 2 次记 0、转 3 次记 1（规范化为最小等效旋转）
 

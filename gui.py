@@ -22,13 +22,16 @@
   绿色连接块 = 这条边确定需要连接；红色 × = 这条边确定是墙
   黄色高亮   = 当前这一步发生变化的格子/边
 用法: python gui.py [puzzles/xxx.txt]        （默认取 puzzles/ 里最新一道）
+      python gui.py 6672132                 按题号加载（默认 10x10；本地已有直接用，
+                                            否则联网抓取并保存到 puzzles/）
+      python gui.py 5 6180259               尺寸+题号（题号在对应尺寸下才有效）
       python gui.py --selftest              无窗口渲染全部步骤 + 手动操作自检
 """
 import sys
 import tkinter as tk
 from pathlib import Path
 
-from get_puzzle import GLYPH, decode
+from get_puzzle import GLYPH, decode, fetch_and_save
 from solver import BIT, DELTA, DIRS, Contradiction, Solver, load_puzzle, newest_puzzle
 
 CELL = 52           # 每格像素
@@ -386,9 +389,35 @@ def selftest(solver, hashed):
     print(f"gui selftest ok: 渲染 {len(solver.steps)} 步 + 挑选/轮换/撤销/自动推理开关 冒烟通过")
 
 
+def resolve_path(args):
+    """命令行参数 -> 谜题文件路径。
+    无参数 = puzzles/ 里最新一道；纯数字 = 题号（可带尺寸前缀，默认尺寸 3，
+    本地已有该题号则直接用，否则联网抓取并保存）；其他 = 谜题文件路径。"""
+    if not args:
+        return Path(newest_puzzle())
+    nums = [a.replace(",", "") for a in args]
+    if nums[-1].isdigit():
+        size = int(nums[0]) if len(nums) == 2 and nums[0].isdigit() else 3
+        pid = nums[-1]
+        saved = (sorted(Path(__file__).parent.glob(
+                     f"puzzles/*_id{pid}_s{size}_*.txt"))
+                 or sorted(Path(__file__).parent.glob(f"puzzles/*_id{pid}_*.txt")))
+        if saved:
+            return saved[-1]
+        return fetch_and_save(size, pid)
+    path = Path(args[0])
+    if not path.exists():
+        raise SystemExit(f"找不到谜题文件: {path}（也可只给题号，"
+                         f"如 python gui.py 6672132）")
+    return path
+
+
 def main():
     args = [a for a in sys.argv[1:] if a != "--selftest"]
-    path = args[0] if args else newest_puzzle()
+    try:
+        path = resolve_path(args)
+    except OSError as e:
+        raise SystemExit(f"联网抓取题号失败: {e}")
     w, h, task_hex, hashed = load_puzzle(path)
     solver = Solver(w, h, decode(task_hex, w, h))
     solver.run()
