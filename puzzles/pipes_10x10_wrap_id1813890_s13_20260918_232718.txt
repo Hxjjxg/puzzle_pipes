@@ -1,0 +1,19 @@
+source: https://www.puzzle-pipes.com/?size=13
+id: 1,813,890
+fetched: 2026-09-18 23:27:18
+size: 10x10
+wrap: 1
+task_hex: 232497b18d7d4c7b929ec48c87a7d2648a95483a664875e7648cebbeb7bec69e925cb121d166527478a2958469b249eea8ae
+hashed_solution: 321cc39de12181beb11084fb55c36289
+mask: 1=right 2=up 4=left 8=down (hex digit per cell, row-major)
+
+╵ └ ╵ ╴ ┌ ┴ ├ ╶ ╷ ┬
+┴ ┬ ╴ ┐ ┴ ├ ┌ ╵ ┌ ┤
+┐ ╴ ╷ ┐ ╷ ┴ │ ┴ ┬ ╵
+┘ ╴ ╷ │ ┌ ─ ╴ ╷ └ │
+┘ ┘ ╴ ╷ ┴ ─ ┤ ┴ ┘ ╴
+╷ ┐ ┤ ├ ├ ┤ ├ ┴ ├ ┤
+┐ ┘ ┌ ┤ ┌ ╵ ─ ┐ ├ ╶
+╵ ╶ ┬ ╶ ┘ ┘ ─ ╵ ┴ ╴
+┴ ╷ │ ╵ ┌ ─ ╷ ╴ ┘ ┌
+├ ╵ ╴ ┌ ┤ ┤ │ ╷ │ ┤

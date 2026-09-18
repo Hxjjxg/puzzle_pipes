@@ -27,9 +27,10 @@ FONT = ("Microsoft YaHei", 11)
 
 
 class GameApp:
-    def __init__(self, root, w, h, task, info):
+    def __init__(self, root, w, h, task, info, wrap=False):
         self.root, self.w, self.h, self.info = root, w, h, info
         self.task = task
+        self.wrap = bool(wrap)
         self.reset_state()
         self.won = False
         self.drag_cells = set()
@@ -69,11 +70,12 @@ class GameApp:
 
     def new_puzzle(self):
         try:
-            task_hex, w, h, pid, _ = fetch_puzzle(3)
+            task_hex, w, h, pid, _, wrap = fetch_puzzle(3)
         except OSError as e:
             messagebox.showerror("抓取失败", f"联网取题失败：{e}")
             return
         self.w, self.h, self.info = w, h, f"题号 {pid}"
+        self.wrap = wrap
         self.task = decode(task_hex, w, h)
         self.reset_state()
         self.won = False
@@ -109,6 +111,16 @@ class GameApp:
 
     # ---------- 判定与绘制 ----------
 
+    def neighbor(self, x, y, d):
+        """相邻格；非 wrap 时越界返回 None。"""
+        dx, dy = DELTA[d]
+        nx, ny = x + dx, y + dy
+        if self.wrap:
+            return nx % self.w, ny % self.h
+        if 0 <= nx < self.w and 0 <= ny < self.h:
+            return nx, ny
+        return None
+
     def component(self):
         """与中心格互相连通的格子集合（原版即从中心泛洪）"""
         start = (self.w // 2, self.h // 2)
@@ -118,16 +130,16 @@ class GameApp:
             m = self.mask[(x, y)]
             for d in DIRS:
                 if m & BIT[d]:
-                    dx, dy = DELTA[d]
-                    n = (x + dx, y + dy)
-                    if 0 <= n[0] < self.w and 0 <= n[1] < self.h \
-                            and n not in seen and self.mask[n] & BIT[OPP[d]]:
+                    n = self.neighbor(x, y, d)
+                    if n is not None and n not in seen \
+                            and self.mask[n] & BIT[OPP[d]]:
                         seen.add(n)
                         stack.append(n)
         return seen
 
     def check(self):
-        ok, msg = board_check(self.w, self.h, lambda x, y: self.mask[(x, y)])
+        ok, msg = board_check(self.w, self.h,
+                              lambda x, y: self.mask[(x, y)], wrap=self.wrap)
         if ok:
             self.won = True
             self.status.config(
@@ -176,8 +188,8 @@ def selftest():
     # 交互冒烟：加载本地谜题，模拟旋转与重开
     root = tk.Tk()
     root.withdraw()
-    w, h, task_hex, _ = load_puzzle(newest_puzzle())
-    app = GameApp(root, w, h, decode(task_hex, w, h), "selftest")
+    w, h, task_hex, _, wrap = load_puzzle(newest_puzzle())
+    app = GameApp(root, w, h, decode(task_hex, w, h), "selftest", wrap=wrap)
     for x, y in [(0, 0), (1, 1), (2, 3), (2, 3)]:
         app.rotate(x, y)
         root.update()
@@ -193,19 +205,20 @@ def main():
         selftest()
         return
     args = [a for a in sys.argv[1:]]
+    wrap = False
     if args:
-        w, h, task_hex, _ = load_puzzle(args[0])
+        w, h, task_hex, _, wrap = load_puzzle(args[0])
         task, info = decode(task_hex, w, h), Path(args[0]).name
     else:
         try:
-            task_hex, w, h, pid, _ = fetch_puzzle(3)
+            task_hex, w, h, pid, _, wrap = fetch_puzzle(3)
             task, info = decode(task_hex, w, h), f"题号 {pid}"
         except OSError:
             p = newest_puzzle()
-            w, h, task_hex, _ = load_puzzle(p)
+            w, h, task_hex, _, wrap = load_puzzle(p)
             task, info = decode(task_hex, w, h), Path(p).name + "（离线）"
     root = tk.Tk()
-    GameApp(root, w, h, task, info)
+    GameApp(root, w, h, task, info, wrap=wrap)
     root.mainloop()
 
 

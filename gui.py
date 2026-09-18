@@ -418,10 +418,11 @@ def main():
         path = resolve_path(args)
     except OSError as e:
         raise SystemExit(f"联网抓取题号失败: {e}")
-    w, h, task_hex, hashed = load_puzzle(path)
-    solver = Solver(w, h, decode(task_hex, w, h))
+    w, h, task_hex, hashed, wrap = load_puzzle(path)
+    solver = Solver(w, h, decode(task_hex, w, h), wrap=wrap)
     solver.run()
     title = (f"求解回放 · {Path(path).name} · 共 {len(solver.steps) - 1} 步"
+             f"{' · wrap 环形' if wrap else ''}"
              f"（左键挑选/轮换候选形状，右键撤销手动）")
     if "--selftest" in sys.argv:
         selftest(solver, hashed)

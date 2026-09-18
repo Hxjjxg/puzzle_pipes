@@ -1,0 +1,14 @@
+source: https://www.puzzle-pipes.com/?size=11
+id: 628,469
+fetched: 2026-09-18 23:31:48
+size: 5x5
+wrap: 1
+task_hex: 991abc9295bee73645541a443
+hashed_solution: 8db9d8ac23e466d39627bc14f49d0578
+mask: 1=right 2=up 4=left 8=down (hex digit per cell, row-major)
+
+┌ ┌ ╶ │ ├
+┐ ┌ ╵ ┌ ─
+├ ┤ ┤ ┴ └
+┘ ╴ ─ ─ ╴
+╶ │ ╴ ╴ └

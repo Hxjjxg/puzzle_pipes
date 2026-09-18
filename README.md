@@ -7,7 +7,7 @@
 | 文件 | 作用 |
 |---|---|
 | `get_puzzle.py` | 抓取题面（题面数据就在页面 HTML 源码里），保存到 `puzzles/` |
-| `solver.py` | 求解器：纯规则推理，每一步都可解释，不搜索不枚举 |
+| `solver.py` | 求解器：R1–R8 规则推理，可选 DFS + 回溯 |
 | `gui.py` | 图形界面：回放每一步推理（进度条拖动），支持手动挑选候选形状辅助推理 |
 | `game.py` | 还原的游戏：点击旋转水管，自动判定连通与解开 |
 | `extension/` | 浏览器插件：把同一套规则推理应用到 puzzle-pipes.com 真实页面上 |
@@ -18,12 +18,19 @@
 python get_puzzle.py          # 随机抓一道 10x10（?size=3）
 python get_puzzle.py 5        # 抓更大盘面
 python get_puzzle.py 3 6672132  # 按题号抓取（题号在对应尺寸下才有效）
+python get_puzzle.py wrap 10  # 抓 10x10 Wrap（环形）；也可用 10x10-wrap 或 size 序号 13
 python solver.py              # 推理求解 puzzles/ 里最新一道
+python solver.py --search     # 规则传播后用 DFS + 回溯继续求解
+python solver.py --search --strategy degree puzzles/xxx.txt
+                               # 指定搜索策略（first/mrv/degree/edge）
+python solver.py --compare puzzles/xxx.txt
+                               # 对比四种策略的节点、回溯和耗时
 python gui.py                 # 步骤回放界面（加载 puzzles/ 里最新一道）
 python gui.py 6672132         # 按题号加载（默认 10x10；本地已有直接用，
                               # 否则联网抓取并保存到 puzzles/）
 python gui.py 5 6180259       # 按尺寸+题号加载
 python game.py                # 玩还原的游戏
+python test_wrap.py           # wrap 环形求解的回归测试
 ```
 
 ## 数据格式
@@ -32,6 +39,7 @@ python game.py                # 玩还原的游戏
 
 - `task_hex`：每格一个十六进制字符（行优先），是 4-bit 管道掩码
 - `hashed_solution: md5(task_hex + 旋转串)`，游戏官方的胜利判定，可用于校验
+- `wrap: 0/1`：是否为环形（Wrap）题面，`solver.py`/`gui.py`/`game.py` 据此切换几何
 - 掩码位含义（对照游戏源码 `dc=[1,0,-1,0], dr=[0,-1,0,1]` 确认）：
   **1=右 2=上 4=左 8=下**
 - 注意：**题号在对应尺寸下才有效**（同一题号在不同尺寸下是不同的题）。
@@ -61,8 +69,38 @@ python game.py                # 玩还原的游戏
 - **R7 唯一出口**：某连通块通向外界的未确定边只剩一条 → 该边必连
 - **R8 预算/容量**：树需要恰"块数-1"条跨块边，恰好只剩这么多条时全部必连；
   块内确定边已满 c-1 条（内部已是树）→ 块内剩余未知边全是墙
+- **R9 环必须断开**（仅 wrap）：环面上每行的横边、每列的竖边各自成环，
+  生成树不能整圈取连接 → 某行/列只剩一条未定而其余全连接时，该边必是墙
 
-不使用搜索、枚举或回溯；推理不动了就停在那里。
+默认纯规则模式不使用搜索、枚举或回溯；推理不动了就停在那里。
+
+### 搜索式求解（`solver.py --search`）
+
+在 R1–R9 规则传播达到不动点后，搜索器选择一个未确定变量，尝试候选值并
+递归传播；出现局部冲突、成环或孤岛时恢复检查点并回溯。搜索成功后会验证
+无悬空开口、全盘连通以及（若题面提供）官方 MD5。
+
+`--strategy` 可选：`first` 按行优先取第一个未确定格；`mrv` 取候选最少的格；
+`degree` 取未知邻边最多的格；`edge` 直接对支持数最少的未知边做二叉分支。
+`--compare` 会在同一题面上运行四种策略，输出节点数、决策数、矛盾/回溯数、
+最大深度和耗时，便于用不同尺寸的题目做基准。
+
+### wrap（环形）模式
+
+网站首页把 Wrap 题挂在 `?size=10..16`（普通 `0..6`，`+10` 即 wrap），
+页内 `wrap:1` 标明是环形。抓题用 `python get_puzzle.py wrap 10`（或
+`10x10-wrap`、size 序号 `13`），保存的 txt 里带 `wrap: 1`。
+
+环形棋盘左右相接、上下相接（torus），**没有边界墙**。求解器在 `wrap=True`
+时把所有方向都当作有边、坐标一律取模，`board_check` 的连通洪泛也按环面走。
+
+关键差别：由于没有边界，**R1 开局一条也推不动**，纯规则模式在 wrap 上会
+零推导；必须用 `--search`。搜索的 `mrv` 策略会优先挑候选最少的格子，
+在 wrap 开局通常先落到直线型（剩 2 种）或十字型（剩 1 种）的格子上，收敛很快。
+生成树性质（V-1 条连接、无环、全连通）在环面上仍成立，另加 wrap 专属 R9。
+
+实测 4/5/7/10/15/20/25 wrap 多道随机题都能搜索解出且官方 MD5 通过
+（`python test_wrap.py` 会验证几何、R9 与真实题面的生成树性质）。
 
 ## gui.py 的手动操作
 
@@ -113,5 +151,6 @@ python game.py                # 玩还原的游戏
 - 状态栏实时显示"已确定 X/Y 格"；全部确定时附盘面校验结果
 - 插件状态不落盘：换题/刷新后历史自动清空，一切以页面现状为准
 
-**限制**：wrap（环形穿墙）模式暂不支持；`solver.js` 是 `solver.py` 的 JS 移植，
+**限制**：插件（`extension/`，JS）暂不支持 wrap（环形穿墙）模式；Python 侧
+`solver.py`/`gui.py`/`game.py` 已支持。`solver.js` 是 `solver.py` 的 JS 移植，
 离线用 node 对拍过（10x10 样例结果逐格一致；4x4 线上题面官方 md5 通过）。
