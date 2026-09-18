@@ -45,7 +45,10 @@
             document.querySelectorAll("#game .board-back > .cell"));
         els = els.filter(function (el) { return !el.classList.contains("wraptile"); });
         if (!els.length) return { ok: false, why: "未找到棋盘" };
-        if (document.querySelector(".wraptile")) return { ok: false, why: "wrap（环形穿墙）模式暂不支持" };
+        // wrap（环形穿墙）模式：wrapH/wrapV 是接缝标记，wrap 题一定会生成；
+        // 另外若开了「显示 wrap」还会有 wraptile。
+        var wrap = !!document.querySelector(
+            "#game .board-back .wrapH, #game .board-back .wrapV, #game .wraptile");
 
         var cells = els.map(function (el) {
             var mPipe = el.className.match(/pipe(\d+)/);
@@ -75,8 +78,9 @@
         for (i = 0; i < h; i++) for (j = 0; j < w; j++)
             if (task[i][j] < 0) return { ok: false, why: "棋盘不完整" };
         return {
-            ok: true, w: w, h: h, task: task, cells: cells,
-            key: w + "x" + h + ":" + cells.map(function (c) { return c.task; }).join(""),
+            ok: true, w: w, h: h, task: task, cells: cells, wrap: wrap,
+            key: w + "x" + h + (wrap ? "-wrap" : "") + ":" +
+                cells.map(function (c) { return c.task; }).join(""),
         };
     }
 
@@ -98,7 +102,7 @@
     }
 
     // ---------- 面板 ----------
-    var panel, statusEl, mainBtn, backBtn, autoChk, fillChk;
+    var panel, statusEl, mainBtn, solveBtn, backBtn, autoChk, fillChk;
     var flashCls = "pl-suggest", fillCls = "pl-fill", errCls = "pl-error";
     var auto = false, proposals = null, history = [], busy = false, lastBoardKey = null;
     var unsureEls = new Set();           // 未确认区域：推理未确定的格子（蓝色可开关显示）
@@ -130,13 +134,28 @@
 
     function updateButtons() {
         if (busy) {
-            mainBtn.disabled = true; mainBtn.textContent = "填充中…";
-        } else if (proposals && proposals.length) {
-            mainBtn.disabled = false; mainBtn.textContent = "确认填充 " + proposals.length + " 格";
-        } else {
-            mainBtn.disabled = false; mainBtn.textContent = "重新推理";
+            mainBtn.disabled = true;
+            solveBtn.disabled = true;
+            backBtn.disabled = true;
+            return;
         }
-        backBtn.disabled = busy;
+        mainBtn.disabled = false;
+        mainBtn.textContent = (proposals && proposals.length)
+            ? "确认填充 " + proposals.length + " 格" : "重新推理";
+        solveBtn.disabled = false;
+        solveBtn.textContent = "🔍 一键求解";
+        backBtn.disabled = false;
+    }
+
+    /* 把 solver 从本轮推理开始到出错涉及过的格子标红，返回标记数 */
+    function markErrors(solver, scan) {
+        var elOf = {}, nErr = 0;
+        scan.cells.forEach(function (c) { elOf[c.x + "," + c.y] = c.el; });
+        solver.touched.forEach(function (key) {
+            var el = elOf[key];
+            if (el) { el.classList.add(errCls); nErr++; }
+        });
+        return nErr;
     }
 
     function dropProposals(msg) {
@@ -156,10 +175,7 @@
             history = []; lastBoardKey = scan.key;
             unsureEls.clear(); refreshFillMarks();
         }
-        var elOf = {};
-        scan.cells.forEach(function (c) { elOf[c.x + "," + c.y] = c.el; });
-
-        var solver = new PipesSolver(scan.w, scan.h, scan.task);
+        var solver = new PipesSolver(scan.w, scan.h, scan.task, scan.wrap);
         var i, c;
         try {
             for (i = 0; i < scan.cells.length; i++) {
@@ -170,11 +186,7 @@
             solver.run();
         } catch (e) {
             // 从推理开始到出错涉及过的所有格子标红
-            var nErr = 0;
-            solver.touched.forEach(function (key) {
-                var el = elOf[key];
-                if (el) { el.classList.add(errCls); nErr++; }
-            });
+            var nErr = markErrors(solver, scan);
             setStatus("推理出错，已停止：" + e.message +
                 "\n红色标出从推理开始到出错涉及的 " + nErr + " 格（含手工摆放）");
             updateButtons();
@@ -204,13 +216,14 @@
             if (determined === total) {
                 var chk = boardCheck(scan.w, scan.h, function (x, y) {
                     return solver.maskAt(x, y);
-                });
+                }, scan.wrap);
                 setStatus("已确定 " + total + "/" + total + " 格\n盘面校验：" +
                     (chk.ok ? "✓ " : "✗ ") + chk.msg);
             } else {
                 setStatus("已确定 " + determined + "/" + total +
                     " 格；推理卡住，剩 " + (total - determined) +
-                    " 格（不搜索不枚举，蓝色标出）\n可手动摆放后再「重新推理」");
+                    " 格（蓝色标出）\n点「🔍 一键求解」用搜索求出完整解" +
+                    (scan.wrap ? "（wrap 模式开局无边界，只能搜索）" : ""));
             }
         }
         updateButtons();
@@ -240,6 +253,81 @@
             : "建议的格子已被摆到位，无需旋转");
         updateButtons();
         if (auto) runRound();
+    }
+
+    /* 一键求解：对当前盘面跑 DFS + 回溯（含 wrap），把整盘摆成解。
+       手动摆过的格子当作人工假设；若假设本身有错则搜索无解，直接报错。
+       填充结果作为一整批进入后退历史，可用「后退」一次撤销。 */
+    async function solveAll() {
+        if (busy) return;
+        dropProposals();
+        clearErrorMarks();
+        var scan = scanBoard();
+        if (!scan.ok) { setStatus(scan.why); updateButtons(); return; }
+        if (scan.key !== lastBoardKey) {
+            history = []; lastBoardKey = scan.key;
+            unsureEls.clear(); refreshFillMarks();
+        }
+
+        var solver = new PipesSolver(scan.w, scan.h, scan.task, scan.wrap);
+        var i, c;
+        for (i = 0; i < scan.cells.length; i++) {
+            c = scan.cells[i];
+            if (c.status !== 0) solver.assume(c.x, c.y, rotTimes(c.task, c.status));
+        }
+
+        busy = true; updateButtons();
+        setStatus("搜索求解中…（" + scan.w + "x" + scan.h +
+            (scan.wrap ? " wrap" : "") + "，规则推不动的题会用回溯枚举）");
+        await sleep(30);                       // 让状态文字先渲染出来
+        var stats;
+        try {
+            stats = solver.search({ strategy: "mrv", maxNodes: 400000, timeoutMs: 20000 });
+        } catch (e) {
+            busy = false; updateButtons();
+            setStatus("求解出错：" + e.message);
+            return;
+        }
+        if (!stats.solved) {
+            busy = false; updateButtons();
+            setStatus("搜索未求出完整解（节点 " + stats.nodes +
+                (stats.timeout ? "，已超时" : stats.limited ? "，达到节点上限" : "") +
+                "）。若你手动摆过格子，可能其中某格摆错了，可「后退」或取消手动摆放后重试。");
+            return;
+        }
+
+        // 按解逐格旋转（手动摆错又恰好有解的情况不存在：解已满足全部约束）
+        var batch = [];
+        unsureEls.clear();
+        for (i = 0; i < scan.cells.length; i++) {
+            c = scan.cells[i];
+            var el = c.el;
+            if (!document.contains(el)) continue;
+            var target = solver.maskAt(c.x, c.y);
+            if (target === undefined) continue;
+            var mPipe = el.className.match(/pipe(\d+)/);
+            var taskMask = mPipe ? parseInt(mPipe[1], 10) : 0;
+            var before = readStatus(el);
+            var mc = minClicks(taskMask, before, target);
+            for (var n = 0; n < mc.n; n++) {
+                fireClick(el, mc.ctrl);
+                if (n + 1 < mc.n) await sleep(14);   // 同格多次点击留出事件间隔
+            }
+            var after = readStatus(el);
+            if (after !== before) batch.push({ x: c.x, y: c.y, before: before, after: after, el: el });
+        }
+        history.push(batch);
+
+        var total = scan.w * scan.h;
+        var chk = boardCheck(scan.w, scan.h, function (x, y) {
+            return solver.maskAt(x, y);
+        }, scan.wrap);
+        busy = false; updateButtons();
+        setStatus("✓ 搜索求解完成：" + total + "/" + total + " 格已摆好" +
+            (batch.length ? "（旋转 " + batch.length + " 格）" : "（本已就位）") +
+            "\n盘面校验：" + (chk.ok ? "✓ " : "✗ ") + chk.msg +
+            "；节点 " + stats.nodes + "，回溯 " + stats.contradictions +
+            (auto ? "" : "\n可点「后退」撤销本次填充"));
     }
 
     async function undo() {
@@ -272,13 +360,15 @@
             '<div class="pl-status" id="pl-status">勾选「自动推理」开始；橙色常亮 = 建议旋转，确认后才真正填充。</div>' +
             '<div class="pl-btns">' +
             '<button id="pl-main" disabled>重新推理</button>' +
+            '<button id="pl-solve" disabled title="搜索+回溯求出完整解并摆好（wrap 也能用）">🔍 一键求解</button>' +
             '<button id="pl-back" disabled>后退</button>' +
             "</div>" +
             '<div class="pl-hint">橙=待确认建议；蓝=未确认区域（推理未确定，可开关）；红=推理出错涉及区域。' +
-            "后退：取消建议 / 撤销上次填充；手动摆过的格子不会被改写。</div>";
+            "「一键求解」用搜索/回溯直接摆好，可后退；手动摆过的格子不会被改写。</div>";
         document.body.appendChild(panel);
         statusEl = panel.querySelector("#pl-status");
         mainBtn = panel.querySelector("#pl-main");
+        solveBtn = panel.querySelector("#pl-solve");
         backBtn = panel.querySelector("#pl-back");
         autoChk = panel.querySelector("#pl-auto");
         fillChk = panel.querySelector("#pl-fillshow");
@@ -296,6 +386,7 @@
             if (proposals && proposals.length) applyProposals();
             else runRound();
         });
+        solveBtn.addEventListener("click", solveAll);
         backBtn.addEventListener("click", undo);
 
         // 简单拖动
@@ -319,8 +410,9 @@
             tries++;
             if (document.querySelector("#game .board-back > .cell")) {
                 clearInterval(timer);
-                if (mainBtn) { mainBtn.disabled = false; backBtn.disabled = false; }
-                setStatus("棋盘就绪。勾选「自动推理」开始；橙色常亮 = 建议旋转（待确认），" +
+                if (mainBtn) { mainBtn.disabled = false; backBtn.disabled = false; solveBtn.disabled = false; }
+                setStatus("棋盘就绪。勾选「自动推理」跑规则推理；或点「🔍 一键求解」" +
+                    "用搜索直接求出完整解（wrap 环形也能用）。橙色常亮 = 建议旋转（待确认），" +
                     "蓝色 = 未确认区域（推理未确定的格子，可开关显示）。");
             } else if (tries > 40) {
                 clearInterval(timer);

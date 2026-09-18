@@ -4,7 +4,7 @@
 
 - Root Python entry points are `get_puzzle.py` (fetch/store; supports Wrap/torus sizes), `solver.py` (R1–R9 propagation + optional DFS/backtracking, normal and wrap boards), `gui.py` (step replay), and `game.py` (Tkinter game). `test_wrap.py` holds the wrap regression test.
 - `puzzles/` contains downloaded `.txt` fixtures; retain useful fixtures for reproducing issues.
-- `extension/` contains the Chrome Manifest V3 port (`solver.js`, `content.js`, `content.css`). `README.md` covers formats and behavior; `NOTE-search.md` tracks future search-solver work.
+- `extension/` contains the Chrome Manifest V3 port (`solver.js`, `content.js`, `content.css`), supporting normal and wrap boards plus a one-click search solve. Node tests: `extension/test_solver.js` (fixtures + md5), `extension/test_content.js` (DOM-mock scan/solve). `README.md` covers formats and behavior; `NOTE-search.md` tracks the search-solver work.
 
 ## Build, Test, and Development Commands
 
@@ -19,6 +19,8 @@ python solver.py --search [file.txt] # Rule propagation, then DFS + backtracking
 python test_wrap.py                  # Wrap geometry/R9/tree regression (needs fixtures)
 python gui.py --selftest              # Render/replay and interaction smoke test
 python game.py --selftest             # Check board logic and reset/rotation flow
+node extension/test_solver.js         # JS solver parity: fixtures + official md5
+node extension/test_content.js        # DOM-mock: board scan + one-click solve
 python gui.py                          # Open the replay GUI
 python game.py                         # Open the playable game
 ```

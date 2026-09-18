@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
     "name": "Pipes 规则推理助手",
-    "version": "1.0",
-    "description": "在 puzzle-pipes.com 上应用纯规则推理（R1–R8，无搜索）：自动推理可开关，建议填充闪烁确认，支持后退，不擦掉手动摆放。",
+    "version": "1.1",
+    "description": "在 puzzle-pipes.com 上推理：R1–R9 规则推理 + 「一键求解」搜索/回溯求出完整解，支持 wrap（环形）模式；建议填充确认，可后退，不擦掉手动摆放。",
     "content_scripts": [
         {
             "matches": ["*://*.puzzle-pipes.com/*"],

@@ -1,10 +1,16 @@
 "use strict";
 /*
- * solver.js —— solver.py（纯规则推理 R1–R8，无搜索/无枚举/无回溯）的 JS 移植。
+ * solver.js —— solver.py 的 JS 移植（规则推理 R1–R9 + 可选 DFS/回溯搜索）。
  * 与 python 版保持同一模型：
  *   poss["x,y"] = 该格还可能的形状集合（4-bit 管道掩码，1=右 2=上 4=左 8=下）
  *   edges["H,x,y"|"V,x,y"] = 1 需要连接 / -1 墙（缺省 0 未确定）
  * 推出矛盾时抛 Error（消息区分 成环/孤岛/无可能形状）。
+ *
+ * wrap（环形穿墙）模式：wrap=true 时棋盘左右/上下相接成环面（torus），
+ * 没有"棋盘外"，所有格子恒有四个方向；边键与两端坐标一律取模。
+ * 此时 R1 不再产生任何推理，开局规则传播一步都推不动，需要 search() 枚举。
+ * 另有 wrap 专属 R9：某行/列的整圈边只剩一条未定而其余全连接时，该边必是墙。
+ *
  * 本文件不碰 DOM，可在页面与 node 里共用。
  */
 var DIRS = ["R", "U", "L", "D"];
@@ -22,16 +28,22 @@ function orbitOf(m) {
     return s;
 }
 
-/* 盘面校验（游戏规则）：无悬空开口，且全部管道连成一个组 */
-function boardCheck(w, h, maskAt) {
-    var x, y, d, m, dx, dy, nx, ny, inside;
+/* 盘面校验（游戏规则）：无悬空开口，且全部管道连成一个组。
+   wrap=true 时上下/左右相接，邻居与连通洪泛都按环面取模。 */
+function boardCheck(w, h, maskAt, wrap) {
+    var x, y, d, m, nx, ny, inside;
+    function neigh(x, y, d) {
+        var nx = x + DELTA[d][0], ny = y + DELTA[d][1];
+        if (wrap) return [(nx % w + w) % w, (ny % h + h) % h];
+        return [nx, ny];
+    }
     for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
         m = maskAt(x, y);
         for (d = 0; d < 4; d++) {
             if (m & BIT[DIRS[d]]) {
-                dx = DELTA[DIRS[d]][0]; dy = DELTA[DIRS[d]][1];
-                nx = x + dx; ny = y + dy;
-                inside = nx >= 0 && nx < w && ny >= 0 && ny < h;
+                var nb = neigh(x, y, DIRS[d]);
+                nx = nb[0]; ny = nb[1];
+                inside = wrap || (nx >= 0 && nx < w && ny >= 0 && ny < h);
                 if (!inside || !(maskAt(nx, ny) & BIT[OPP[DIRS[d]]]))
                     return { ok: false, msg: "格(" + (x + 1) + "," + (y + 1) + ") " + DIR_CN[DIRS[d]] + "开口悬空" };
             }
@@ -43,8 +55,9 @@ function boardCheck(w, h, maskAt) {
         m = maskAt(x, y);
         for (d = 0; d < 4; d++) {
             if (m & BIT[DIRS[d]]) {
-                nx = x + DELTA[DIRS[d]][0]; ny = y + DELTA[DIRS[d]][1];
-                if (nx >= 0 && nx < w && ny >= 0 && ny < h && !seen.has(nx + "," + ny)) {
+                var nb2 = neigh(x, y, DIRS[d]);
+                nx = nb2[0]; ny = nb2[1];
+                if ((wrap || (nx >= 0 && nx < w && ny >= 0 && ny < h)) && !seen.has(nx + "," + ny)) {
                     seen.add(nx + "," + ny); stack.push([nx, ny]);
                 }
             }
@@ -55,28 +68,52 @@ function boardCheck(w, h, maskAt) {
     return { ok: true, msg: "无悬空开口且全部连通" };
 }
 
-var PipesSolver = function (w, h, task) {
+var PipesSolver = function (w, h, task, wrap) {
     this.w = w; this.h = h; this.task = task;          // task[y][x] = 题面掩码
+    this.wrap = !!wrap;
     this.poss = new Map();
     for (var y = 0; y < h; y++) for (var x = 0; x < w; x++)
         this.poss.set(x + "," + y, orbitOf(task[y][x]));
     this.edges = new Map();                            // 键 -> 1 / -1
     this.touched = new Set();                          // 本轮推理涉及过的格子 "x,y"
+    this.searchStats = null;
 };
 
+function mod(a, n) { return ((a % n) + n) % n; }
+
 PipesSolver.prototype.touch = function (x, y) {
+    if (this.wrap) { x = mod(x, this.w); y = mod(y, this.h); }
     this.touched.add(x + "," + y);
 };
 
 PipesSolver.prototype.ekey = function (x, y, d) {
-    if (d === "R") return "H," + x + "," + y;
-    if (d === "L") return "H," + (x - 1) + "," + y;
-    if (d === "U") return "V," + x + "," + (y - 1);
-    return "V," + x + "," + y;
+    if (d === "R") return "H," + mod(x, this.w) + "," + y;
+    if (d === "L") return "H," + mod(x - 1, this.w) + "," + y;
+    if (d === "U") return "V," + x + "," + mod(y - 1, this.h);
+    return "V," + x + "," + mod(y, this.h);
 };
 PipesSolver.prototype.hasEdge = function (x, y, d) {
+    if (this.wrap) return true;
     var nx = x + DELTA[d][0], ny = y + DELTA[d][1];
     return nx >= 0 && nx < this.w && ny >= 0 && ny < this.h;
+};
+/* 朝 d 方向的相邻格；wrap 取模，非 wrap 越界返回 null */
+PipesSolver.prototype.neighbor = function (x, y, d) {
+    var nx = x + DELTA[d][0], ny = y + DELTA[d][1];
+    if (this.wrap) return [mod(nx, this.w), mod(ny, this.h)];
+    if (nx >= 0 && nx < this.w && ny >= 0 && ny < this.h) return [nx, ny];
+    return null;
+};
+/* 盘面上全部相邻格的边键（wrap 时含首尾相接的边） */
+PipesSolver.prototype.allEdges = function () {
+    var out = [], x, y;
+    for (y = 0; y < this.h; y++)
+        for (x = 0; x < (this.wrap ? this.w : this.w - 1); x++)
+            out.push("H," + x + "," + y);
+    for (y = 0; y < (this.wrap ? this.h : this.h - 1); y++)
+        for (x = 0; x < this.w; x++)
+            out.push("V," + x + "," + y);
+    return out;
 };
 PipesSolver.prototype.edgeState = function (x, y, d) {
     if (!this.hasEdge(x, y, d)) return -1;             // 棋盘外一律是墙
@@ -85,7 +122,8 @@ PipesSolver.prototype.edgeState = function (x, y, d) {
 };
 PipesSolver.prototype.setEdge = function (x, y, d, state) {
     this.touch(x, y);
-    this.touch(x + DELTA[d][0], y + DELTA[d][1]);
+    var nb = this.neighbor(x, y, d);
+    if (nb) this.touch(nb[0], nb[1]);
     var k = this.ekey(x, y, d), old = this.edges.get(k);
     if (old !== undefined && old !== state)
         throw new Error("连接冲突: 格(" + (x + 1) + "," + (y + 1) + ")的" + DIR_CN[d] +
@@ -103,12 +141,13 @@ PipesSolver.prototype.maskAt = function (x, y) {
     for (var v of s) return v;
 };
 
-/* R1 边界排除：朝棋盘外的开口不可能（外圈的 T 型、直线型由此直接确定） */
+/* R1 边界排除：朝棋盘外的开口不可能（外圈的 T 型、直线型由此直接确定）。
+   wrap 时没有棋盘外，此规则自然空转。 */
 PipesSolver.prototype.stepBorder = function () {
     for (var y = 0; y < this.h; y++) for (var x = 0; x < this.w; x++) {
         var walls = DIRS.filter(function (d) { return !this.hasEdge(x, y, d); }, this);
         if (!walls.length) continue;
-        var s = this.poss.get(x + "," + y), self = this;
+        var s = this.poss.get(x + "," + y);
         var nw = new Set();
         s.forEach(function (m) {
             var bad = walls.some(function (d) { return m & BIT[d]; });
@@ -148,7 +187,7 @@ PipesSolver.prototype.stepR2 = function () {
 PipesSolver.prototype.stepR3 = function () {
     for (var [key, s] of this.poss) {
         if (s.size === 1) continue;
-        var x = +key.split(",")[0], y = +key.split(",")[1], self = this;
+        var x = +key.split(",")[0], y = +key.split(",")[1];
         for (var di = 0; di < 4; di++) {
             var d = DIRS[di], st = this.edgeState(x, y, d);
             if (st === 0) continue;
@@ -184,15 +223,15 @@ PipesSolver.prototype.stepR4 = function () {
 
 PipesSolver.prototype._cellsOf = function (key) {
     var p = key.split(","), o = p[0], x = +p[1], y = +p[2];
-    if (o === "H") return [[x, y], [x + 1, y]];
-    return [[x, y], [x, y + 1]];
+    if (o === "H") return [[x, y], [mod(x + 1, this.w), y]];
+    return [[x, y], [x, mod(y + 1, this.h)]];
 };
 PipesSolver.prototype._setEdgeKey = function (key, state) {
     var p = key.split(",");
     this.setEdge(+p[1], +p[2], p[0] === "H" ? "R" : "D", state);
 };
 
-/* 一轮全局推理（生成树性质）：R5/R6 查矛盾，R7/R8 推新边。应用了新边返回 true */
+/* 一轮全局推理（生成树性质）：R5/R6 查矛盾，R7/R8/R9 推新边。应用了新边返回 true */
 PipesSolver.prototype.stepGlobal = function () {
     var w = this.w, h = this.h, x, y, self = this;
     // R5: 确定连接边建并查集，必须构成森林；统计每块的大小与内部确定边数
@@ -236,10 +275,11 @@ PipesSolver.prototype.stepGlobal = function () {
             var p = stack.pop(), cx = p[0], cy = p[1];
             for (var di = 0; di < 4; di++) {
                 var d = DIRS[di];
-                if (self.hasEdge(cx, cy, d) && self.edgeState(cx, cy, d) !== -1) {
-                    var nx = cx + DELTA[d][0], ny = cy + DELTA[d][1], nk = nx + "," + ny;
-                    if (!seen.has(nk)) { seen.add(nk); comp.push(nk); stack.push([nx, ny]); }
-                }
+                if (self.edgeState(cx, cy, d) === -1) continue;
+                var nb = self.neighbor(cx, cy, d);
+                if (!nb) continue;
+                var nk = nb[0] + "," + nb[1];
+                if (!seen.has(nk)) { seen.add(nk); comp.push(nk); stack.push(nb); }
             }
         }
         comps.push(comp);
@@ -256,11 +296,9 @@ PipesSolver.prototype.stepGlobal = function () {
             ")）与其余" + (w * h - small.length) + "格被墙隔死");
     }
 
-    // 未确定边分类：跨块（出口）/ 块内（注意：未确定边不在 edges 里，要按结构枚举）
+    // 未确定边分类：跨块（出口）/ 块内（未确定边不在 edges 里，要按结构枚举）
     var cross = [], esc = new Map(), internal = new Map();
-    var all = [];
-    for (y = 0; y < h; y++) for (x = 0; x < w - 1; x++) all.push("H," + x + "," + y);
-    for (y = 0; y < h - 1; y++) for (x = 0; x < w; x++) all.push("V," + x + "," + y);
+    var all = this.allEdges();
     for (i = 0; i < all.length; i++) {
         var key = all[i];
         if ((this.edges.get(key) || 0) !== 0) continue;
@@ -278,7 +316,7 @@ PipesSolver.prototype.stepGlobal = function () {
 
     // R7: 某连通块只剩一个出口 -> 该边必连
     var r7root = null;
-    esc.forEach(function (n, r) { if (n === 1 && !r7root) r7root = r; });
+    esc.forEach(function (n, r) { if (n === 1 && r7root === null) r7root = r; });
     if (r7root !== null) {
         for (i = 0; i < cross.length; i++) {
             var ab3 = this._cellsOf(cross[i]);
@@ -302,11 +340,34 @@ PipesSolver.prototype.stepGlobal = function () {
     // R8b: 块内容量 —— 内部确定边已满 c-1 条（已是树），剩余内部未知边全是墙
     var r8root = null, r8keys = null;
     internal.forEach(function (ks, r) {
-        if (ecount.get(r) === size.get(r) - 1 && ks.length && !r8root) { r8root = r; r8keys = ks; }
+        if (ecount.get(r) === size.get(r) - 1 && ks.length && r8root === null) { r8root = r; r8keys = ks; }
     });
     if (r8root !== null) {
         this._setEdgeKey(r8keys[0], -1);
         return true;
+    }
+
+    // R9（仅 wrap）：环面上每行 w 条横边、每列 h 条竖边各自成环，
+    // 生成树不能整圈取连接 -> 某行/列只剩一条未定且其余全连接时，该边必是墙。
+    if (this.wrap) {
+        for (y = 0; y < h; y++) {
+            var unkH = [], allConH = true;
+            for (x = 0; x < w; x++) {
+                var rhk = "H," + x + "," + y, rhv = this.edges.get(rhk);
+                if (rhv === undefined) unkH.push(rhk);
+                else if (rhv !== 1) { allConH = false; break; }
+            }
+            if (allConH && unkH.length === 1) { this._setEdgeKey(unkH[0], -1); return true; }
+        }
+        for (x = 0; x < w; x++) {
+            var unkV = [], allConV = true;
+            for (y = 0; y < h; y++) {
+                var rvk = "V," + x + "," + y, rvv = this.edges.get(rvk);
+                if (rvv === undefined) unkV.push(rvk);
+                else if (rvv !== 1) { allConV = false; break; }
+            }
+            if (allConV && unkV.length === 1) { this._setEdgeKey(unkV[0], -1); return true; }
+        }
     }
     return false;
 };
@@ -333,6 +394,115 @@ PipesSolver.prototype.determinedCount = function () {
     var n = 0;
     this.poss.forEach(function (s) { if (s.size === 1) n++; });
     return n;
+};
+
+/* ---------- DFS / 回溯搜索（对应 solver.py 的 _dfs/search） ---------- */
+
+PipesSolver.prototype._stateCopy = function () {
+    var poss = new Map(), edges = new Map(this.edges);
+    this.poss.forEach(function (v, k) { poss.set(k, new Set(v)); });
+    return { poss: poss, edges: edges };
+};
+PipesSolver.prototype._restoreState = function (st) {
+    this.poss = st.poss; this.edges = st.edges;
+};
+PipesSolver.prototype._unknownDegree = function (x, y) {
+    var n = 0, i;
+    for (i = 0; i < 4; i++) if (this.edgeState(x, y, DIRS[i]) === 0) n++;
+    return n;
+};
+/* 未知边取 1/墙时，两端候选形状的支持数乘积，用于 edge 策略 */
+PipesSolver.prototype._edgeSupport = function (key) {
+    var ab = this._cellsOf(key), a = ab[0], b = ab[1];
+    var dA = key.charAt(0) === "H" ? "R" : "D", dB = OPP[dA];
+    var sa = this.poss.get(a[0] + "," + a[1]), sb = this.poss.get(b[0] + "," + b[1]);
+    var openA = 0, openB = 0;
+    sa.forEach(function (m) { if (m & BIT[dA]) openA++; });
+    sb.forEach(function (m) { if (m & BIT[dB]) openB++; });
+    return [openA * openB, (sa.size - openA) * (sb.size - openB)];
+};
+/* 选择分支变量：返回 {kind:"cell"|"edge", target, values} */
+PipesSolver.prototype.selectBranch = function (strategy) {
+    var self = this;
+    if (strategy === "first") {
+        for (var [key, s] of this.poss)
+            if (s.size > 1) return { kind: "cell", target: key, values: Array.from(s).sort(function (a, b) { return a - b; }) };
+    }
+    if (strategy === "edge") {
+        var best = null;
+        this.allEdges().forEach(function (key) {
+            if ((self.edges.get(key) || 0) !== 0) return;
+            var sup = self._edgeSupport(key);
+            var score = Math.min(sup[0], sup[1]) * 1e6 + (sup[0] + sup[1]);
+            if (best === null || score < best.score) best = { score: score, key: key, sup: sup };
+        });
+        var vals = best.sup[0] <= best.sup[1] ? [1, -1] : [-1, 1];
+        return { kind: "edge", target: best.key, values: vals };
+    }
+    // 默认 mrv：候选最少的格子，平手取未知邻边更多的
+    var bestCell = null, bestSize = Infinity, bestDeg = -1;
+    this.poss.forEach(function (s, key) {
+        if (s.size <= 1) return;
+        var p = key.split(","), x = +p[0], y = +p[1];
+        var deg = self._unknownDegree(x, y);
+        if (s.size < bestSize || (s.size === bestSize && deg > bestDeg)) {
+            bestSize = s.size; bestDeg = deg;
+            bestCell = { key: key, vals: Array.from(s).sort(function (a, b) { return a - b; }) };
+        }
+    });
+    return { kind: "cell", target: bestCell.key, values: bestCell.vals };
+};
+
+/* 在规则传播不动点之后做 DFS + 回溯；成功时把解留在当前状态里。
+   opts: { strategy:"mrv"|"first"|"edge", maxNodes, timeoutMs }
+   返回 { solved, nodes, decisions, contradictions, depth, limited, timeout } */
+PipesSolver.prototype.search = function (opts) {
+    opts = opts || {};
+    var strategy = opts.strategy || "mrv";
+    var maxNodes = opts.maxNodes || 500000;
+    var deadline = opts.timeoutMs ? Date.now() + opts.timeoutMs : 0;
+    var self = this;
+    var stats = { strategy: strategy, solved: false, nodes: 0, decisions: 0,
+                  contradictions: 0, depth: 0, limited: false, timeout: false };
+    var LIMIT = { __limit: true };
+
+    function dfs(depth) {
+        stats.nodes++;
+        if (stats.nodes > maxNodes) { stats.limited = true; throw LIMIT; }
+        if (deadline && (stats.nodes & 63) === 0 && Date.now() > deadline) {
+            stats.timeout = true; throw LIMIT;
+        }
+        if (depth > stats.depth) stats.depth = depth;
+
+        if (self.isSolved()) {
+            var chk = boardCheck(self.w, self.h, function (x, y) { return self.maskAt(x, y); }, self.wrap);
+            if (chk.ok) return true;
+            stats.contradictions++;
+            return false;
+        }
+        var br = self.selectBranch(strategy);
+        stats.decisions++;
+        for (var i = 0; i < br.values.length; i++) {
+            var snap = self._stateCopy();
+            try {
+                if (br.kind === "cell") self.poss.set(br.target, new Set([br.values[i]]));
+                else self._setEdgeKey(br.target, br.values[i]);
+                self.propagate();
+                if (dfs(depth + 1)) return true;
+            } catch (e) {
+                if (e === LIMIT) { self._restoreState(snap); throw e; }
+                stats.contradictions++;
+            }
+            self._restoreState(snap);
+        }
+        return false;
+    }
+
+    this.run();
+    try { stats.solved = dfs(0); }
+    catch (e) { if (e !== LIMIT) throw e; }
+    this.searchStats = stats;
+    return stats;
 };
 
 /* 每格最小旋转次数（与官方校验串一致：直线型周期为 2） */

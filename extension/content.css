@@ -27,9 +27,10 @@
     margin-bottom: 8px;
     color: #c8d2dc;
 }
-#pl-helper .pl-btns { display: flex; gap: 6px; }
+#pl-helper .pl-btns { display: flex; gap: 6px; flex-wrap: wrap; }
 #pl-helper button {
-    flex: 1;
+    flex: 1 1 auto;
+    min-width: 60px;
     padding: 5px 8px;
     border: 0;
     border-radius: 5px;
@@ -39,6 +40,8 @@
     font-family: inherit;
     cursor: pointer;
 }
+#pl-helper button#pl-solve { flex-basis: 100%; background: #2e7d32; }
+#pl-helper button#pl-solve:hover:not(:disabled) { background: #388e3c; }
 #pl-helper button:hover:not(:disabled) { background: #3a80c9; }
 #pl-helper button:disabled { opacity: 0.45; cursor: default; }
 #pl-helper .pl-hint { margin-top: 6px; font-size: 11px; color: #8b95a1; }
