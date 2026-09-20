@@ -1,4 +1,4 @@
-# puzzle_loop
+# puzzle_pipes
 
 [puzzle-pipes.com](https://www.puzzle-pipes.com/)（接水管 / Net）的抓题、推理求解与游戏还原。
 
